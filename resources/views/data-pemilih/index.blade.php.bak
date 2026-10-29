@@ -1,0 +1,160 @@
+
+@extends('layouts.app')
+
+@section('content')
+<div style="padding: 24px;">
+
+    <h1>Data Pemilih / DPS</h1>
+
+    <p>
+        Tanggal pemilihan:
+        <strong>{{ $tanggalPemilihan->format('d-m-Y') }}</strong>
+    </p>
+
+    <p>
+        Jumlah calon pemilih:
+        <strong>{{ $jumlahCalonPemilih }}</strong>
+    </p>
+
+    <form method="GET" action="{{ route('data-pemilih.index') }}"
+          style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:20px;">
+
+        <input
+            type="text"
+            name="search"
+            value="{{ $search }}"
+            placeholder="Cari nama, NIK, nomor KK, alamat..."
+            style="padding:8px; min-width:230px;"
+        >
+
+        <select name="dusun" style="padding:8px;">
+            <option value="">Semua Dusun</option>
+            @foreach ($dusuns as $dusun)
+                <option value="{{ $dusun->id }}"
+                    {{ $dusunFilter == $dusun->id ? 'selected' : '' }}>
+                    {{ $dusun->nama }}
+                </option>
+            @endforeach
+        </select>
+
+        <select name="rw" style="padding:8px;">
+            <option value="">Semua RW</option>
+            @foreach ($rws as $rw)
+                <option value="{{ $rw->id }}"
+                    {{ $rwFilter == $rw->id ? 'selected' : '' }}>
+                    RW {{ $rw->nomor }}
+                    ({{ $rw->dusun?->nama ?? '-' }})
+                </option>
+            @endforeach
+        </select>
+
+        <select name="rt" style="padding:8px;">
+            <option value="">Semua RT</option>
+            @foreach ($rts as $rt)
+                <option value="{{ $rt->id }}"
+                    {{ $rtFilter == $rt->id ? 'selected' : '' }}>
+                    RT {{ $rt->nomor }}
+                    (RW {{ $rt->rw?->nomor ?? '-' }})
+                </option>
+            @endforeach
+        </select>
+
+        <button type="submit" style="padding:8px 14px;">
+            Cari / Filter
+        </button>
+
+        <a href="{{ route('data-pemilih.index') }}"
+           style="padding:8px 14px;">
+            Reset
+        </a>
+    </form>
+
+    <div style="display:flex; gap:10px; margin-bottom:18px;">
+        <a
+            href="{{ route('data-pemilih.index', array_merge(request()->query(), ['export' => 'csv'])) }}"
+            style="padding:9px 14px; background:#198754; color:white; text-decoration:none;"
+        >
+            Ekspor CSV / Excel
+        </a>
+
+        <button type="button" onclick="window.print()" style="padding:9px 14px;">
+            Cetak
+        </button>
+    </div>
+
+    <div style="overflow-x:auto;">
+        <table border="1" cellpadding="8" cellspacing="0"
+               style="border-collapse:collapse; width:100%;">
+            <thead>
+                <tr>
+                    <th>No.</th>
+                    <th>NIK</th>
+                    <th>Nama Lengkap</th>
+                    <th>Tanggal Lahir</th>
+                    <th>Umur</th>
+                    <th>Dusun</th>
+                    <th>RW</th>
+                    <th>RT</th>
+                    <th>Nomor KK</th>
+                    <th>Alamat</th>
+                </tr>
+            </thead>
+
+            <tbody>
+                @forelse ($calonPemilih as $i => $penduduk)
+                    @php
+                        $kk = $penduduk->kartuKeluarga;
+                        $rt = $kk?->rt;
+                        $rw = $rt?->rw;
+                        $dusun = $rw?->dusun;
+                    @endphp
+
+                    <tr>
+                        <td>{{ $i + 1 }}</td>
+                        <td>{{ $penduduk->nik }}</td>
+                        <td>{{ $penduduk->nama_lengkap }}</td>
+                        <td>{{ $penduduk->tanggal_lahir }}</td>
+                        <td>{{ $penduduk->umur_pada_pemilihan }} tahun</td>
+                        <td>{{ $dusun?->nama ?? '-' }}</td>
+                        <td>{{ $rw?->nomor ?? '-' }}</td>
+                        <td>{{ $rt?->nomor ?? '-' }}</td>
+                        <td>{{ $kk?->no_kk ?? '-' }}</td>
+                        <td>{{ $kk?->alamat ?? '-' }}</td>
+                    </tr>
+                @empty
+                    <tr>
+                        <td colspan="10" style="text-align:center;">
+                            Tidak ada calon pemilih yang sesuai dengan filter.
+                        </td>
+                    </tr>
+                @endforelse
+            </tbody>
+        </table>
+    </div>
+
+    <p style="margin-top:16px; font-size:13px;">
+        Catatan: daftar ini merupakan calon pemilih berdasarkan umur dan data
+        penduduk yang tersedia, bukan daftar pemilih resmi.
+    </p>
+</div>
+
+<style>
+@media print {
+    nav, aside, header, form, button, a {
+        display: none !important;
+    }
+
+    body {
+        font-size: 11px;
+    }
+
+    table {
+        width: 100%;
+    }
+
+    th, td {
+        padding: 4px;
+    }
+}
+</style>
+@endsection

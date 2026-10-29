@@ -1,0 +1,190 @@
+<?php
+namespace App\Http\Controllers;
+
+use App\Models\Penduduk;
+use App\Models\Dusun;
+use App\Models\Rw;
+use App\Models\Rt;
+use Carbon\Carbon;
+use Illuminate\Http\Request;
+
+class DataPemilihController extends Controller
+{
+    public function index(Request $request)
+    {
+        // Tanggal acuan pemilihan.
+        $tanggalConfig = config(
+            'pemilu.tanggal_pemungutan_suara',
+            '2029-02-14'
+        );
+
+        $tanggalPemilihan = Carbon::parse($tanggalConfig)->startOfDay();
+
+        // Ambil data penduduk dan relasi wilayahnya.
+        $query = Penduduk::with('kartuKeluarga.rt.rw.dusun')
+            ->whereNotNull('tanggal_lahir')
+            ->whereDate(
+                'tanggal_lahir',
+                '<=',
+                $tanggalPemilihan->toDateString()
+            );
+
+        // Pencarian nama, NIK, nomor KK, atau alamat.
+        if ($request->filled('search')) {
+            $search = trim($request->input('search'));
+
+            $query->where(function ($q) use ($search) {
+                $q->where('nama_lengkap', 'like', "%{$search}%")
+                    ->orWhere('nik', 'like', "%{$search}%")
+                    ->orWhereHas('kartuKeluarga', function ($kk) use ($search) {
+                        $kk->where('no_kk', 'like', "%{$search}%")
+                            ->orWhere('alamat', 'like', "%{$search}%");
+                    });
+            });
+        }
+
+        // Hitung umur pada tanggal pemilihan.
+        $calonPemilih = $query
+            ->orderBy('nama_lengkap')
+            ->get()
+            ->map(function ($penduduk) use ($tanggalPemilihan) {
+                $tanggalLahir = Carbon::parse($penduduk->tanggal_lahir);
+
+                $penduduk->umur_pada_pemilihan =
+                    (int) $tanggalLahir->diffInYears($tanggalPemilihan);
+
+                return $penduduk;
+            })
+            ->filter(function ($penduduk) {
+                return $penduduk->umur_pada_pemilihan >= 17;
+            })
+            ->values();
+
+        // Nilai filter dari form.
+        $dusunFilter = $request->input('dusun', '');
+        $rwFilter = $request->input('rw', '');
+        $rtFilter = $request->input('rt', '');
+
+        // Filter calon pemilih berdasarkan ID wilayah.
+        $calonPemilih = $calonPemilih
+            ->filter(function ($penduduk) use (
+                $dusunFilter,
+                $rwFilter,
+                $rtFilter
+            ) {
+                $kk = $penduduk->kartuKeluarga;
+                $rt = $kk?->rt;
+                $rw = $rt?->rw;
+                $dusun = $rw?->dusun;
+
+                if (
+                    $dusunFilter !== ''
+                    && (string) ($dusun?->id ?? '') !== (string) $dusunFilter
+                ) {
+                    return false;
+                }
+
+                if (
+                    $rwFilter !== ''
+                    && (string) ($rw?->id ?? '') !== (string) $rwFilter
+                ) {
+                    return false;
+                }
+
+                if (
+                    $rtFilter !== ''
+                    && (string) ($rt?->id ?? '') !== (string) $rtFilter
+                ) {
+                    return false;
+                }
+
+                return true;
+            })
+            ->values();
+
+        // Ambil pilihan dropdown dari seluruh data wilayah,
+        // supaya pilihan tetap tersedia meskipun hasil filter kosong.
+        $dusuns = Dusun::orderBy('nama')->get();
+
+        $rws = Rw::with('dusun')
+            ->orderBy('nomor')
+            ->get();
+
+        $rts = Rt::with('rw.dusun')
+            ->orderBy('nomor')
+            ->get();
+
+        // Ekspor hasil yang sudah dicari dan difilter ke CSV.
+        if ($request->query('export') === 'csv') {
+            return response()->streamDownload(
+                function () use ($calonPemilih) {
+                    $handle = fopen('php://output', 'w');
+
+                    // Membantu Excel membaca karakter UTF-8.
+                    fwrite($handle, "\xEF\xBB\xBF");
+
+                    fputcsv($handle, [
+                        'No.',
+                        'NIK',
+                        'Nama Lengkap',
+                        'Tanggal Lahir',
+                        'Umur Saat Pemilihan',
+                        'Dusun',
+                        'RW',
+                        'RT',
+                        'Nomor KK',
+                        'Alamat',
+                    ]);
+
+                    foreach ($calonPemilih as $index => $penduduk) {
+                        $kk = $penduduk->kartuKeluarga;
+                        $rt = $kk?->rt;
+                        $rw = $rt?->rw;
+                        $dusun = $rw?->dusun;
+
+                        fputcsv($handle, [
+                            $index + 1,
+                            $penduduk->nik,
+                            $penduduk->nama_lengkap,
+                            $penduduk->tanggal_lahir,
+                            $penduduk->umur_pada_pemilihan,
+                            $dusun?->nama ?? '-',
+                            $rw?->nomor ?? '-',
+                            $rt?->nomor ?? '-',
+                            $kk?->no_kk ?? '-',
+                            $kk?->alamat ?? '-',
+                        ]);
+                    }
+
+                    fclose($handle);
+                },
+                'daftar-calon-pemilih.csv',
+                ['Content-Type' => 'text/csv; charset=UTF-8']
+            );
+        }
+
+
+        $dusuns = \App\Models\Dusun::orderBy('nama')->get();
+
+        $rws = \App\Models\Rw::with('dusun')
+            ->orderBy('nomor')
+            ->get();
+
+        $rts = \App\Models\Rt::with('rw.dusun')
+            ->orderBy('nomor')
+            ->get();
+
+        return view('data-pemilih.index', [
+            'calonPemilih' => $calonPemilih,
+            'tanggalPemilihan' => $tanggalPemilihan,
+            'jumlahCalonPemilih' => $calonPemilih->count(),
+            'search' => $request->input('search', ''),
+            'dusuns' => $dusuns,
+            'rws' => $rws,
+            'rts' => $rts,
+            'dusunFilter' => $dusunFilter,
+            'rwFilter' => $rwFilter,
+            'rtFilter' => $rtFilter,
+        ]);
+    }
+}
